@@ -1,0 +1,62 @@
+{
+  "dataset": "exports/nlp_dataset_train.csv",
+  "validation_dataset": "exports/nlp_dataset_val.csv",
+  "train_size": 4800,
+  "validation_size": 600,
+  "accuracy": 0.5667,
+  "macro_f1": 0.5588,
+  "classification_report": {
+    "negative": {
+      "precision": 0.7077625570776256,
+      "recall": 0.775,
+      "f1-score": 0.7398568019093079,
+      "support": 200.0
+    },
+    "neutral": {
+      "precision": 0.4382716049382716,
+      "recall": 0.355,
+      "f1-score": 0.39226519337016574,
+      "support": 200.0
+    },
+    "positive": {
+      "precision": 0.5205479452054794,
+      "recall": 0.57,
+      "f1-score": 0.5441527446300716,
+      "support": 200.0
+    },
+    "accuracy": 0.5666666666666667,
+    "macro avg": {
+      "precision": 0.5555273690737922,
+      "recall": 0.5666666666666665,
+      "f1-score": 0.5587582466365151,
+      "support": 600.0
+    },
+    "weighted avg": {
+      "precision": 0.5555273690737922,
+      "recall": 0.5666666666666667,
+      "f1-score": 0.5587582466365152,
+      "support": 600.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      155,
+      32,
+      13
+    ],
+    [
+      37,
+      71,
+      92
+    ],
+    [
+      27,
+      59,
+      114
+    ]
+  ],
+  "final_test_dataset": "exports/nlp_dataset_test.csv",
+  "final_test_size": 600,
+  "final_test_accuracy": 0.5133,
+  "final_test_macro_f1": 0.5061
+}
