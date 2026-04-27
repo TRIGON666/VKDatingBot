@@ -1,109 +1,248 @@
-# VK Compatibility Bot (MVP)
+# VK Compatibility Bot
 
-Реализация по ТЗ: бот в VK для анкетирования, текстового анализа TF-IDF, подбора пары и сбора обратной связи.
+VK-бот для анкет, мэтчей и расчета совместимости. Проект запускается локально на Python и PostgreSQL, поэтому его можно передать через GitHub: другой пользователь копирует `.env.example`, запускает Docker Compose и стартует `main.py`.
 
-## Что реализовано
+Проект совместим с Windows, macOS и Linux. Основная разница только в командах активации виртуального окружения и копирования `.env`.
 
-- Регистрация пользователя по `user_id` VK (проверка повторной регистрации).
-- Сохранение структурированной анкеты в PostgreSQL.
-- Расчет анкетной совместимости (веса критериев, нормализация 0..100%).
-- Сохранение текстового профиля и расчет TF-IDF + cosine similarity (0..100%).
-- Подбор топ-пар по комбинированному коэффициенту (анкета + TF-IDF + NLP, при наличии психотеста).
-- Сбор обратной связи: лайк, согласие на встречу, пользовательская оценка.
-- Базовая аналитика и экспорт `CSV` для последующей визуализации.
+## Стек
 
-## Структура
+- Python 3.10+
+- PostgreSQL 16
+- Docker Compose
+- `vk-api`
+- `psycopg`
+- `scikit-learn`
+- `sentence-transformers`
+- `pandas`, `numpy`, `joblib`
 
-- `main.py` — точка входа.
-- `src/config.py` — загрузка настроек.
-- `src/database.py` — PostgreSQL слой и схема.
-- `src/questionnaire.py` — анкета и формула совместимости.
-- `src/text_analysis.py` — предобработка текста + TF-IDF.
-- `src/matching.py` — ранжирование кандидатов.
-- `src/analytics.py` — статистика и экспорт.
-- `src/vk_bot.py` — обработка команд VK.
+## Быстрый Запуск На Windows
 
-## Запуск
-
-1. Установить зависимости:
-
-```bash
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 pip install -r requirements.txt
+Copy-Item .env.example .env
+docker compose up -d postgres
+python main.py check-env
+python main.py
 ```
 
-2. Создать `.env` из примера:
+## Быстрый Запуск На macOS/Linux
+
+На macOS заранее установите Docker Desktop и Python. Если Python ставится через Homebrew:
 
 ```bash
-copy .env.example .env
+brew install python git
 ```
 
-3. Указать токен сообщества в `.env`:
+Дальше запуск такой:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+cp .env.example .env
+docker compose up -d postgres
+python main.py check-env
+python main.py
+```
+
+Если команда `docker compose` не найдена, проверьте, что Docker Desktop запущен и установлен Compose V2.
+
+При успешном старте в консоли появится:
+
+```text
+Bot is running. Press Ctrl+C to stop.
+```
+
+## `.env`
+
+После копирования `.env.example` заполните `.env`:
 
 ```env
-VK_TOKEN=...
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/compatibility_bot
+VK_TOKEN=your_vk_community_token
+DATABASE_URL=postgresql://compatibility_user:compatibility_pass@localhost:5433/compatibility_bot
+ADMIN_IDS=123456789
+LOG_FILE=logs/bot.log
+LOG_LEVEL=INFO
+NLP_PRETRAINED_MODEL_NAME=sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 ```
 
-4. Запустить:
+`ADMIN_IDS` - это VK ID администраторов через запятую. Если оставить пустым, админ-команды будут отключены.
+
+Проект использует PostgreSQL на порту `5433`, чтобы не конфликтовать с локальным PostgreSQL на стандартном `5432`.
+
+## Проверка Окружения
+
+```bash
+python main.py check-env
+```
+
+Проверяется:
+
+- наличие `VK_TOKEN`;
+- строка подключения к PostgreSQL;
+- подключение к базе;
+- наличие NLP-модели;
+- наличие обучающего датасета;
+- статистика фото в базе;
+- состояние `ADMIN_IDS`.
+
+## Команды
+
+Основной запуск:
 
 ```bash
 python main.py
 ```
 
-## Команды в VK
-
-- `начать` — регистрация.
-- `анкета key=value;key=value` — заполнение анкеты.
-- `текст ваш_ответ` — открытый текстовый профиль.
-- `подбор` — топ совместимых пользователей.
-- `фидбек to=ID like=0/1 meet=0/1 score=1..5` — обратная связь.
-- `статистика` — агрегаты + CSV экспорт.
-
-## Эксперимент для сравнения алгоритмов
-
-Для методики эффективности из ТЗ:
-
-- Режим A: при ранжировании использовать только `questionnaire_score`.
-- Режим B: при ранжировании использовать только `text_score`.
-- Сравнить:
-  - долю взаимных лайков;
-  - среднюю пользовательскую оценку совпадения;
-  - долю успешных совпадений (`like=1` и `meet=1`).
-
-В MVP уже есть нужный сбор данных в таблице `feedback` и экспорт `exports/feedback.csv`.
-
-## NLP: эксплуатация и дообучение
-
-После запуска бота система автоматически:
-
-- нормализует текст профилей (включая лемматизацию);
-- собирает данные действий пользователей (лайк/пропуск/блок);
-- считает метрики качества предсказаний.
-
-Полезные команды:
+NLP-утилиты:
 
 ```bash
-# Проверка состояния данных и метрик
+python main.py nlp export-dataset
+python main.py nlp train-text-model
+python main.py nlp check-compatibility --left "люблю путешествия" --right "обожаю походы"
+```
+
+Старые скрипты оставлены как совместимые команды через `main.py`:
+
+```bash
 python main.py monitor
-
-# Переобучение модели (когда набрано достаточно данных)
 python main.py train
-
-# Анализ проблемных примеров
 python main.py analyze --errors
-
-# Управление резервными копиями модели
+python main.py auto-train
 python main.py utils --status
-python main.py utils --backup
-python main.py utils --restore
+```
 
-# Универсальные NLP-инструменты (вместо нескольких отдельных скриптов)
-python main.py tools export-dataset
-python main.py tools train-text-model
-python main.py tools check-compatibility --left "текст 1" --right "текст 2"
+## Админ-Команды В VK
 
-# Интеграционный тест (вывод на русском)
+Доступны только пользователям из `ADMIN_IDS`:
+
+- `/admin_reports` - последние жалобы.
+- `/admin_funnel` - базовая воронка событий.
+- `/admin_month` - отчет за последние 30 дней: пользователи, лайки, мэтчи, отзывы, жалобы, топ событий.
+- `/admin_photo_check` - диагностика фото: количество фото в базе, размер, проверка выгрузки тестового фото через VK API.
+
+## Фото
+
+Фото сохраняются в PostgreSQL в таблице `user_photos`. При загрузке бот:
+
+- принимает фото из вложений VK;
+- скачивает лучший доступный размер;
+- проверяет MIME-тип: `image/jpeg`, `image/png`, `image/webp`;
+- отсекает файлы больше 10 МБ;
+- сохраняет байты, MIME-тип и имя файла.
+
+При показе анкеты бот выгружает фото из базы в сообщения VK через `photos.getMessagesUploadServer` и `photos.saveMessagesPhoto`.
+
+Проверка:
+
+```bash
+python main.py check-env
+```
+
+и в VK:
+
+```text
+/admin_photo_check
+```
+
+## Логирование
+
+Логи пишутся в консоль и файл из `LOG_FILE`. По умолчанию:
+
+```text
+logs/bot.log
+```
+
+Путь `logs/bot.log` одинаково работает на Windows, macOS и Linux: директория создается автоматически.
+
+## База Данных
+
+Остановить PostgreSQL:
+
+```bash
+docker compose down
+```
+
+Остановить и удалить локальные данные:
+
+```bash
+docker compose down -v
+```
+
+Подключиться к базе:
+
+```bash
+docker compose exec postgres psql -U compatibility_user -d compatibility_bot
+```
+
+Схема создается автоматически при первом запуске `Database`.
+
+## Совместимость И NLP
+
+Описание алгоритмов, весов, TF-IDF, NLP-модели и схем для диплома находится в:
+
+[docs/compatibility_algorithms.md](docs/compatibility_algorithms.md)
+
+Коротко:
+
+- анкета считает совпадения по структурированным ответам;
+- TF-IDF сравнивает похожесть текстов по важным словам и фразам;
+- NLP использует предобученную multilingual-модель для смысловой близости текстов;
+- итоговое ранжирование смешивает анкету, психологический профиль, TF-IDF/NLP и поведение пользователей.
+
+Модель можно дообучать:
+
+```bash
+python main.py nlp train-text-model
+```
+
+Для проверки интеграции:
+
+```bash
 python test_nlp_integration.py
 ```
 
-Минимальный рекомендуемый порог для первого дообучения: `500` записей в `data/nlp_training_data.csv`.
+## Передача Через GitHub
+
+Минимальный сценарий для другого пользователя на macOS/Linux:
+
+```bash
+git clone <repo-url>
+cd <repo-folder>
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+cp .env.example .env
+docker compose up -d postgres
+python main.py check-env
+python main.py
+```
+
+Минимальный сценарий для Windows:
+
+```powershell
+git clone <repo-url>
+cd <repo-folder>
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+Copy-Item .env.example .env
+docker compose up -d postgres
+python main.py check-env
+python main.py
+```
+
+Перед запуском нужно вставить свой `VK_TOKEN` и при необходимости `ADMIN_IDS` в `.env`.
+
+## Примечания Для macOS
+
+- На Apple Silicon зависимости `torch` и `sentence-transformers` могут ставиться дольше, это нормально.
+- Если `pip install -r requirements.txt` падает на сборке пакетов, обновите pip: `python -m pip install --upgrade pip setuptools wheel`.
+- Если порт `5433` занят, измените порт в `docker-compose.yml` и `DATABASE_URL`.
+- Если терминал показывает русские тексты некорректно, проверьте кодировку файла: проект хранит `.py`, `.md`, `.csv` в UTF-8.
