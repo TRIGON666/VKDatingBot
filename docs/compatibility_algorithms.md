@@ -198,7 +198,7 @@ flowchart TD
 flowchart TD
     A[Текст пользователя A] --> C[preprocess_profile]
     B[Текст пользователя B] --> C
-    C --> D[left_profile: ... || right_profile: ...]
+    C --> D["Пара признаков: left_profile + right_profile"]
     D --> E[TF-IDF vectorizer из обученной модели]
     E --> S[Предобученная sentence-transformers модель]
     S --> T[Semantic embedding features]
