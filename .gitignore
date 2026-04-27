@@ -20,3 +20,16 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+
+# Local secrets
+.env
+
+# Local runtime reports
+reports/
+exports/feedback.csv
+exports/monitor_report.json
+
+# Local runtime data
+data/compatibility.db
+data/nlp_metrics.jsonl

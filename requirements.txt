@@ -6,3 +6,4 @@ requests
 psycopg[binary]
 pymorphy2
 pymorphy2-dicts-ru
+sentence-transformers

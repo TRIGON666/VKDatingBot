@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import logging
+import random
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -130,4 +131,18 @@ def rank_matches(
             )
         )
 
-    return sorted(results, key=lambda v: v.combined_score, reverse=True)
+    # Keep relevance first, but randomize candidates inside close score bands so browsing
+    # is less repetitive while still moving from strongest to weakest matches.
+    sorted_results = sorted(results, key=lambda v: v.combined_score, reverse=True)
+    bands: Dict[int, List[MatchResult]] = {}
+    for item in sorted_results:
+        band = int(item.combined_score // 10)
+        bands.setdefault(band, []).append(item)
+
+    randomized: List[MatchResult] = []
+    rng = random.Random()
+    for band in sorted(bands.keys(), reverse=True):
+        group = bands[band]
+        rng.shuffle(group)
+        randomized.extend(group)
+    return randomized

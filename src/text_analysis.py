@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from typing import Iterable, List
+from difflib import SequenceMatcher
+from typing import Iterable, List, Set
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+
 from src.constants import BASE_RU_STOPWORDS
 
 
-RU_STOPWORDS = BASE_RU_STOPWORDS
-RU_STOPWORDS_SET = set(RU_STOPWORDS)
-NON_ALNUM_RE = re.compile(r"[^a-zа-я0-9\s]", flags=re.IGNORECASE)
+RU_STOPWORDS_SET = set(BASE_RU_STOPWORDS)
+NON_ALNUM_RE = re.compile(r"[^a-zа-яё0-9\s]", flags=re.IGNORECASE)
 
 NORM_MAP = {
     "айти": "it",
@@ -21,22 +22,14 @@ NORM_MAP = {
     "кодер": "it",
     "дев": "it",
     "девопс": "it",
-    "qa": "it",
     "тестировщик": "it",
-    "аналитик": "it",
     "дизайнер": "design",
-    "ux": "design",
-    "ui": "design",
-    "маркетолог": "marketing",
-    "смм": "marketing",
-    "smm": "marketing",
     "путешествия": "путешествие",
     "путешествовать": "путешествие",
     "путешествую": "путешествие",
     "поездки": "путешествие",
     "поездка": "путешествие",
     "трип": "путешествие",
-    "trip": "путешествие",
     "поход": "путешествие",
     "походы": "путешествие",
     "спортзал": "спорт",
@@ -46,156 +39,69 @@ NORM_MAP = {
     "бег": "спорт",
     "бегаю": "спорт",
     "йога": "спорт",
-    "пилатес": "спорт",
     "плавание": "спорт",
-    "плавать": "спорт",
     "велосипед": "спорт",
-    "велопрогулки": "спорт",
-    "football": "футбол",
-    "basketball": "баскетбол",
     "тренировки": "тренировка",
     "тренируюсь": "тренировка",
-    "тренироваться": "тренировка",
     "киношка": "кино",
     "кинотеатр": "кино",
-    "cinema": "кино",
-    "movie": "кино",
     "фильмы": "фильм",
     "сериалы": "сериал",
-    "сериалов": "сериал",
-    "аниме": "аниме",
-    "мультики": "мультфильм",
-    "мультфильмы": "мультфильм",
-    "документалки": "документальный",
     "книги": "книга",
     "книжки": "книга",
     "чтение": "книга",
     "читать": "книга",
-    "литература": "книга",
-    "музыка": "музыка",
     "музон": "музыка",
     "слушаю": "музыка",
     "концерты": "концерт",
-    "концерт": "концерт",
-    "рэп": "hiphop",
-    "хипхоп": "hiphop",
-    "hip-hop": "hiphop",
-    "рок": "rock",
-    "рокнролл": "rock",
-    "джаз": "jazz",
-    "классика": "classical",
-    "прогулки": "прогулка",
-    "прогулок": "прогулка",
     "гулять": "прогулка",
     "гуляю": "прогулка",
     "парк": "прогулка",
-    "набережная": "прогулка",
-    "психология": "психолог",
-    "психологию": "психолог",
-    "психологией": "психолог",
-    "общительный": "общение",
-    "общительная": "общение",
-    "коммуникабельный": "общение",
     "интроверт": "спокойный",
     "экстраверт": "активный",
     "домосед": "домашний",
     "домоседка": "домашний",
     "семья": "семейный",
-    "семейный": "семейный",
     "дети": "семейный",
-    "ребенок": "семейный",
-    "ребенка": "семейный",
     "отношения": "отношения",
-    "relationship": "отношения",
     "серьезные": "серьезно",
-    "серьезных": "серьезно",
     "брак": "серьезно",
-    "жениться": "серьезно",
-    "замуж": "серьезно",
     "флирт": "легко",
     "общение": "общение",
     "чат": "общение",
     "переписка": "общение",
     "дружба": "дружба",
-    "друзья": "дружба",
-    "friendship": "дружба",
     "настолки": "настольные_игры",
-    "настольные": "настольные_игры",
-    "настольных": "настольные_игры",
-    "boardgames": "настольные_игры",
     "игры": "игра",
     "гейминг": "игра",
-    "геймер": "игра",
-    "gaming": "игра",
-    "ps5": "игра",
-    "xbox": "игра",
-    "комп": "игра",
     "учеба": "учеба",
-    "учусь": "учеба",
     "студент": "учеба",
-    "универ": "учеба",
-    "университет": "учеба",
-    "работа": "карьера",
     "работаю": "карьера",
+    "работа": "карьера",
     "карьера": "карьера",
     "бизнес": "карьера",
-    "предприниматель": "карьера",
-    "кофе": "кофе",
     "кофейни": "кофе",
-    "чай": "чай",
-    "готовка": "кулинария",
     "готовить": "кулинария",
-    "кулинария": "кулинария",
-    "выпечка": "кулинария",
-    "ресторан": "еда",
+    "готовка": "кулинария",
     "рестораны": "еда",
-    "кафе": "еда",
-    "вино": "вино",
-    "винцо": "вино",
-    "бар": "бар",
-    "бары": "бар",
     "тусовки": "вечеринка",
     "вечеринки": "вечеринка",
     "клуб": "вечеринка",
     "клубы": "вечеринка",
     "природа": "природа",
-    "лес": "природа",
     "горы": "природа",
     "море": "природа",
-    "пляж": "природа",
-    "животные": "животные",
     "питомцы": "животные",
-    "кот": "кошка",
-    "коты": "кошка",
-    "кошка": "кошка",
-    "кошки": "кошка",
-    "собака": "собака",
-    "собаки": "собака",
-    "пес": "собака",
-    "пёс": "собака",
-    "волонтер": "волонтерство",
-    "волонтерство": "волонтерство",
-    "благотворительность": "волонтерство",
+    "животные": "животные",
     "саморазвитие": "развитие",
-    "развитие": "развитие",
-    "медитация": "осознанность",
-    "mindfulness": "осознанность",
     "юмор": "юмор",
-    "шутки": "юмор",
     "мемы": "юмор",
-    "мем": "юмор",
-    "искренность": "ценности",
-    "честность": "ценности",
-    "уважение": "ценности",
-    "доброта": "ценности",
-    "эмпатия": "ценности",
 }
 
 RU_SUFFIXES = (
     "иями",
     "ями",
     "ами",
-    "иями",
     "ого",
     "ему",
     "ому",
@@ -229,9 +135,19 @@ RU_SUFFIXES = (
     "ю",
 )
 
+TOPIC_GROUPS = {
+    "active": {"спорт", "тренировка", "путешествие", "природа", "активный"},
+    "home": {"домашний", "книга", "сериал", "чай", "настольные_игры", "спокойный"},
+    "social": {"вечеринка", "общение", "дружба", "клуб", "бар"},
+    "family": {"семейный", "отношения", "серьезно"},
+    "career": {"карьера", "работа", "бизнес", "развитие"},
+    "creative": {"музыка", "кино", "концерт", "design"},
+}
+
+CONFLICTING_TOPIC_PAIRS = {("home", "social"), ("home", "active"), ("family", "social")}
+
 
 def _stem_ru(token: str) -> str:
-    """Простое отсечение русских суффиксов для нормализации токенов."""
     if token.isdigit() or len(token) < 4:
         return token
     for suffix in RU_SUFFIXES:
@@ -241,41 +157,35 @@ def _stem_ru(token: str) -> str:
 
 
 def _normalize_token(token: str) -> str:
-    """Нормализует токен через словарь замен и стемминг."""
     mapped = NORM_MAP.get(token, token)
     return _stem_ru(mapped)
 
 
 def _tokenize(text: str) -> List[str]:
-    """Токенизирует текст и удаляет шумовые/стоп-слова."""
-    normalized = text.lower().replace("ё", "е").strip()
+    normalized = (text or "").lower().replace("ё", "е").strip()
     normalized = NON_ALNUM_RE.sub(" ", normalized)
     tokens: List[str] = []
-    for tok in normalized.split():
-        if not tok:
+    for raw_token in normalized.split():
+        if len(raw_token) < 2 and not raw_token.isdigit():
             continue
-        if len(tok) < 2 and not tok.isdigit():
+        token = _normalize_token(raw_token)
+        if token in RU_STOPWORDS_SET:
             continue
-        tok = _normalize_token(tok)
-        if tok in RU_STOPWORDS_SET:
-            continue
-        tokens.append(tok)
+        tokens.append(token)
     return tokens
 
 
 def preprocess_text(text: str) -> str:
-    """Возвращает нормализованный текст для векторизации."""
-    return " ".join(_tokenize(text))
+    tokens = _tokenize(text)
+    topics = sorted(_topic_set(tokens))
+    return " ".join([*tokens, *topics, *topics])
 
 
 def _safe_similarity(left_matrix, right_matrix) -> float:
-    """Считает cosine similarity и приводит значение к float."""
-    value = cosine_similarity(left_matrix, right_matrix)[0][0]
-    return float(value)
+    return float(cosine_similarity(left_matrix, right_matrix)[0][0])
 
 
 def _weighted_jaccard_similarity(first_text: str, second_text: str) -> float:
-    """Считает взвешенный Жаккар по частотам токенов."""
     first_tokens = _tokenize(first_text)
     second_tokens = _tokenize(second_text)
     if not first_tokens or not second_tokens:
@@ -284,50 +194,72 @@ def _weighted_jaccard_similarity(first_text: str, second_text: str) -> float:
     left = Counter(first_tokens)
     right = Counter(second_tokens)
     words = set(left) | set(right)
-    inter = sum(min(left[w], right[w]) for w in words)
-    union = sum(max(left[w], right[w]) for w in words)
-    if union == 0:
+    intersection = sum(min(left[word], right[word]) for word in words)
+    union = sum(max(left[word], right[word]) for word in words)
+    return float(intersection / union) if union else 0.0
+
+
+def _topic_set(tokens: Iterable[str]) -> Set[str]:
+    token_set = set(tokens)
+    topics = set()
+    for topic, markers in TOPIC_GROUPS.items():
+        if any(marker in token or token in marker for token in token_set for marker in markers):
+            topics.add(topic)
+    return topics
+
+
+def _topic_similarity(first_text: str, second_text: str) -> float:
+    first_topics = _topic_set(_tokenize(first_text))
+    second_topics = _topic_set(_tokenize(second_text))
+    if not first_topics and not second_topics:
+        return 0.5
+    union = first_topics | second_topics
+    intersection = first_topics & second_topics
+    base = len(intersection) / len(union) if union else 0.0
+
+    conflict = any(
+        (left in first_topics and right in second_topics) or (right in first_topics and left in second_topics)
+        for left, right in CONFLICTING_TOPIC_PAIRS
+    )
+    if conflict:
+        base *= 0.65
+    return base
+
+
+def _sequence_similarity(first_text: str, second_text: str) -> float:
+    first = preprocess_text(first_text)
+    second = preprocess_text(second_text)
+    if not first or not second:
         return 0.0
-    return float(inter / union)
+    return SequenceMatcher(None, first, second).ratio()
 
 
 def tfidf_compatibility(first_text: str, second_text: str) -> float:
-    """Считает совместимость двух текстов в процентах."""
     prepared = [preprocess_text(first_text), preprocess_text(second_text)]
     if not prepared[0] or not prepared[1]:
         return 0.0
 
-    word_vectorizer = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, max_df=0.95)
+    word_vectorizer = TfidfVectorizer(ngram_range=(1, 3), sublinear_tf=True, max_df=0.95)
     word_matrix = word_vectorizer.fit_transform(prepared)
     word_similarity = _safe_similarity(word_matrix[0:1], word_matrix[1:2])
 
-    char_vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), sublinear_tf=True)
+    char_vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 6), sublinear_tf=True)
     char_matrix = char_vectorizer.fit_transform(prepared)
     char_similarity = _safe_similarity(char_matrix[0:1], char_matrix[1:2])
 
     overlap_similarity = _weighted_jaccard_similarity(first_text, second_text)
-    # Формула итогового скоринга: 0.55*word + 0.25*char + 0.2*jaccard.
-    similarity = (word_similarity * 0.55) + (char_similarity * 0.25) + (overlap_similarity * 0.2)
-    return round(float(similarity * 100.0), 2)
+    topic_similarity = _topic_similarity(first_text, second_text)
+    sequence_similarity = _sequence_similarity(first_text, second_text)
+
+    similarity = (
+        word_similarity * 0.38
+        + char_similarity * 0.18
+        + overlap_similarity * 0.22
+        + topic_similarity * 0.17
+        + sequence_similarity * 0.05
+    )
+    return round(float(max(0.0, min(1.0, similarity)) * 100.0), 2)
 
 
 def bulk_tfidf_scores(base_text: str, others: Iterable[str]) -> List[float]:
-    """Считает совместимость базового текста с набором других текстов."""
-    all_texts = [preprocess_text(base_text)] + [preprocess_text(v) for v in others]
-    if not all_texts[0]:
-        return [0.0 for _ in all_texts[1:]]
-
-    word_vectorizer = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, max_df=0.95)
-    word_matrix = word_vectorizer.fit_transform(all_texts)
-    word_sims = cosine_similarity(word_matrix[0:1], word_matrix[1:]).flatten()
-
-    char_vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5), sublinear_tf=True)
-    char_matrix = char_vectorizer.fit_transform(all_texts)
-    char_sims = cosine_similarity(char_matrix[0:1], char_matrix[1:]).flatten()
-
-    overlap_sims = [_weighted_jaccard_similarity(base_text, other) for other in others]
-
-    return [
-        round(float(((w * 0.55) + (c * 0.25) + (o * 0.2)) * 100.0), 2)
-        for w, c, o in zip(word_sims, char_sims, overlap_sims)
-    ]
+    return [tfidf_compatibility(base_text, other) for other in others]

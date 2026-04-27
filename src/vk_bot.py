@@ -6,7 +6,7 @@ import urllib.request
 import logging
 import re
 from difflib import SequenceMatcher
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 import vk_api
@@ -23,7 +23,6 @@ from src.psychology_questions import (
     format_profile_summary,
 )
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s %(message)s")
 logger = logging.getLogger("vk_bot")
 
 
@@ -31,6 +30,8 @@ class VKCompatibilityBot:
     DAILY_LIKE_LIMIT = 50
     DAILY_DISLIKE_LIMIT = 200
     FEEDBACK_PAGE_SIZE = 10
+    MAX_PHOTO_BYTES = 10 * 1024 * 1024
+    ALLOWED_PHOTO_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
     CITY_ALIASES = {
         "москва": {"москва", "мск", "msk", "moscow", "moskva", "default city"},
         "санкт петербург": {
@@ -101,11 +102,12 @@ class VKCompatibilityBot:
     def _log(self, message: str, *args: object) -> None:
         logger.info(message, *args)
 
-    def __init__(self, token: str, db: Database) -> None:
+    def __init__(self, token: str, db: Database, admin_ids: Optional[Set[int]] = None) -> None:
         self.vk_session = vk_api.VkApi(token=token)
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
         self.db = db
+        self.admin_ids = admin_ids or set()
         self.user_states: Dict[int, Dict[str, object]] = {}
         self._nlp_metrics_tracker = None
         self._city_norm_cache: Dict[str, str] = {}
@@ -116,6 +118,17 @@ class VKCompatibilityBot:
             for alias in aliases:
                 self.city_alias_to_canonical[self._normalize_city_raw(alias)] = canonical
         self._city_alias_items = list(self.city_alias_to_canonical.items())
+        self._log("VK bot initialized. Admins configured: %s", len(self.admin_ids))
+
+    def _is_admin(self, user_id: int) -> bool:
+        return user_id in self.admin_ids
+
+    def _require_admin(self, user_id: int) -> bool:
+        if self._is_admin(user_id):
+            return True
+        self._log("Denied admin command for user=%s", user_id)
+        self.send_message(user_id, "Команда доступна только администратору.")
+        return False
 
     def _track_nlp_interaction(
         self,
@@ -448,15 +461,19 @@ class VKCompatibilityBot:
             if not photo_url:
                 return None
             with urllib.request.urlopen(photo_url, timeout=20) as resp:
-                data = resp.read()
                 content_type = str(resp.headers.get_content_type() or "image/jpeg")
+                if content_type not in self.ALLOWED_PHOTO_MIME_TYPES:
+                    self._log("Skipped photo with unsupported content type: %s", content_type)
+                    return None
+                data = resp.read(self.MAX_PHOTO_BYTES + 1)
+            if len(data) > self.MAX_PHOTO_BYTES:
+                self._log("Skipped photo larger than %s bytes", self.MAX_PHOTO_BYTES)
+                return None
             ext = "jpg"
             if "png" in content_type:
                 ext = "png"
             elif "webp" in content_type:
                 ext = "webp"
-            elif "gif" in content_type:
-                ext = "gif"
             filename = f"photo.{ext}"
             return data, content_type, filename
         except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError):
@@ -486,15 +503,19 @@ class VKCompatibilityBot:
                 if not photo_url:
                     continue
                 with urllib.request.urlopen(photo_url, timeout=20) as resp:
-                    data = resp.read()
                     content_type = str(resp.headers.get_content_type() or "image/jpeg")
+                    if content_type not in self.ALLOWED_PHOTO_MIME_TYPES:
+                        self._log("Skipped photo from message %s with unsupported content type: %s", message_id, content_type)
+                        continue
+                    data = resp.read(self.MAX_PHOTO_BYTES + 1)
+                if len(data) > self.MAX_PHOTO_BYTES:
+                    self._log("Skipped photo from message %s larger than %s bytes", message_id, self.MAX_PHOTO_BYTES)
+                    continue
                 ext = "jpg"
                 if "png" in content_type:
                     ext = "png"
                 elif "webp" in content_type:
                     ext = "webp"
-                elif "gif" in content_type:
-                    ext = "gif"
                 result.append((data, content_type, f"photo.{ext}"))
             return result
         except (urllib.error.URLError, urllib.error.HTTPError, KeyError, IndexError):
@@ -505,6 +526,17 @@ class VKCompatibilityBot:
 
     def _upload_photo_record_to_messages(self, user_id: int, photo: PhotoRecord) -> Optional[str]:
         try:
+            photo_data = photo.get("photo_data")
+            mime_type = photo.get("mime_type", "image/jpeg")
+            if not isinstance(photo_data, (bytes, bytearray)) or not photo_data:
+                self._log("Skipped empty photo upload for user=%s", user_id)
+                return None
+            if len(photo_data) > self.MAX_PHOTO_BYTES:
+                self._log("Skipped photo upload larger than %s bytes for user=%s", self.MAX_PHOTO_BYTES, user_id)
+                return None
+            if mime_type not in self.ALLOWED_PHOTO_MIME_TYPES:
+                self._log("Skipped photo upload with unsupported content type %s for user=%s", mime_type, user_id)
+                return None
             upload_server = self.vk.photos.getMessagesUploadServer(peer_id=user_id)
             upload_url = upload_server.get("upload_url")
             if not upload_url:
@@ -514,8 +546,8 @@ class VKCompatibilityBot:
                 files={
                     "photo": (
                         photo.get("filename", "photo.jpg"),
-                        io.BytesIO(photo["photo_data"]),
-                        photo.get("mime_type", "image/jpeg"),
+                        io.BytesIO(photo_data),
+                        mime_type,
                     )
                 },
                 timeout=30,
@@ -1713,6 +1745,8 @@ class VKCompatibilityBot:
         return False
 
     def handle_admin_reports(self, user_id: int) -> None:
+        if not self._require_admin(user_id):
+            return
         reports = self.db.get_reports(limit=10)
         if not reports:
             self.send_message(user_id, "Жалоб нет.")
@@ -1723,6 +1757,8 @@ class VKCompatibilityBot:
         self.send_message(user_id, "\n".join(lines))
 
     def handle_admin_funnel(self, user_id: int) -> None:
+        if not self._require_admin(user_id):
+            return
         funnel = self.db.get_funnel_counts()
         self.send_message(
             user_id,
@@ -1733,6 +1769,50 @@ class VKCompatibilityBot:
             f"like_sent: {funnel.get('like_sent', 0)}\n"
             f"match: {funnel.get('match', 0)}",
         )
+
+    def handle_admin_month_report(self, user_id: int) -> None:
+        if not self._require_admin(user_id):
+            return
+        report = self.db.get_monthly_admin_report(days=30)
+        top_events = report.get("top_events") or []
+        event_lines = [f"- {row['event_name']}: {row['c']}" for row in top_events[:5]]
+        if not event_lines:
+            event_lines = ["- событий пока нет"]
+        self.send_message(
+            user_id,
+            "Отчет за последние 30 дней:\n"
+            f"Новые пользователи: {report.get('new_users', 0)}\n"
+            f"Активные пользователи: {report.get('active_users', 0)}\n"
+            f"Лайки: {report.get('likes', 0)}\n"
+            f"Взаимные мэтчи: {report.get('matches', 0)}\n"
+            f"Отзывы: {report.get('feedback_count', 0)}\n"
+            f"Средняя оценка встреч: {report.get('avg_score', 0)}\n"
+            f"Успешные встречи: {report.get('successful_feedback', 0)}\n"
+            f"Жалобы: {report.get('reports', 0)}\n"
+            "Топ событий:\n"
+            + "\n".join(event_lines),
+        )
+
+    def handle_photo_diagnostics(self, user_id: int) -> None:
+        if not self._require_admin(user_id):
+            return
+        stats = self.db.get_photo_storage_stats()
+        photos = self.db.get_user_photos(user_id)
+        upload_status = "у администратора нет фото для тестовой выгрузки"
+        attachment = None
+        if photos:
+            attachment = self._upload_photo_record_to_messages(user_id, photos[0])
+            upload_status = "успешно" if attachment else "ошибка выгрузки через VK API"
+        self.send_message(
+            user_id,
+            "Диагностика фото:\n"
+            f"Фото в базе: {stats.get('photos_count', 0)}\n"
+            f"Пользователей с фото: {stats.get('users_with_photos', 0)}\n"
+            f"Размер в базе: {stats.get('total_bytes', 0)} байт\n"
+            f"Тест выгрузки: {upload_status}",
+        )
+        if attachment:
+            self.send_message(user_id, "Тестовое фото из базы:", attachment=attachment)
 
     def handle_message(self, event) -> None:
         user_id = event.user_id
@@ -1805,6 +1885,12 @@ class VKCompatibilityBot:
             return
         if lowered == "/admin_funnel":
             self.handle_admin_funnel(user_id)
+            return
+        if lowered in {"/admin_month", "/admin_report_month"}:
+            self.handle_admin_month_report(user_id)
+            return
+        if lowered in {"/admin_photo_check", "/photo_check"}:
+            self.handle_photo_diagnostics(user_id)
             return
 
         profile = self.db.get_user_profile(user_id)

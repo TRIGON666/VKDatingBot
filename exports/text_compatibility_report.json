@@ -1,62 +1,67 @@
 {
   "dataset": "exports/nlp_dataset_train.csv",
+  "extra_datasets": {
+    "data/nlp_training_data.csv": 5
+  },
+  "real_data_weight": 4,
   "validation_dataset": "exports/nlp_dataset_val.csv",
-  "train_size": 4800,
+  "train_size": 4820,
   "validation_size": 600,
-  "accuracy": 0.5667,
-  "macro_f1": 0.5588,
+  "accuracy": 0.5333,
+  "macro_f1": 0.525,
   "classification_report": {
     "negative": {
-      "precision": 0.7077625570776256,
-      "recall": 0.775,
-      "f1-score": 0.7398568019093079,
+      "precision": 0.6666666666666666,
+      "recall": 0.73,
+      "f1-score": 0.6968973747016707,
       "support": 200.0
     },
     "neutral": {
-      "precision": 0.4382716049382716,
-      "recall": 0.355,
-      "f1-score": 0.39226519337016574,
+      "precision": 0.4,
+      "recall": 0.32,
+      "f1-score": 0.35555555555555557,
       "support": 200.0
     },
     "positive": {
-      "precision": 0.5205479452054794,
-      "recall": 0.57,
-      "f1-score": 0.5441527446300716,
+      "precision": 0.497737556561086,
+      "recall": 0.55,
+      "f1-score": 0.5225653206650831,
       "support": 200.0
     },
-    "accuracy": 0.5666666666666667,
+    "accuracy": 0.5333333333333333,
     "macro avg": {
-      "precision": 0.5555273690737922,
-      "recall": 0.5666666666666665,
-      "f1-score": 0.5587582466365151,
+      "precision": 0.5214680744092509,
+      "recall": 0.5333333333333333,
+      "f1-score": 0.5250060836407698,
       "support": 600.0
     },
     "weighted avg": {
-      "precision": 0.5555273690737922,
-      "recall": 0.5666666666666667,
-      "f1-score": 0.5587582466365152,
+      "precision": 0.5214680744092508,
+      "recall": 0.5333333333333333,
+      "f1-score": 0.5250060836407698,
       "support": 600.0
     }
   },
   "confusion_matrix": [
     [
-      155,
-      32,
-      13
-    ],
-    [
+      146,
       37,
-      71,
-      92
+      17
     ],
     [
-      27,
+      42,
+      64,
+      94
+    ],
+    [
+      31,
       59,
-      114
+      110
     ]
   ],
+  "model_kind": "pretrained_pair_logreg_v2",
   "final_test_dataset": "exports/nlp_dataset_test.csv",
   "final_test_size": 600,
-  "final_test_accuracy": 0.5133,
-  "final_test_macro_f1": 0.5061
+  "final_test_accuracy": 0.5083,
+  "final_test_macro_f1": 0.4971
 }

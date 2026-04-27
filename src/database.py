@@ -24,7 +24,11 @@ class UserProfile:
 
 
 class Database:
+    """PostgreSQL storage used by the bot and NLP utilities."""
+
     def __init__(self, database_url: str) -> None:
+        if not database_url:
+            raise ValueError("DATABASE_URL is required for PostgreSQL connection")
         self.database_url = database_url
         self._init_schema()
 
@@ -126,7 +130,6 @@ class Database:
                         updated_at TIMESTAMPTZ DEFAULT NOW()
                     );
 
-                    -- Feedback data migrations and hard constraints.
                     DELETE FROM feedback f1
                     USING feedback f2
                     WHERE f1.from_user_id = f2.from_user_id
@@ -135,63 +138,58 @@ class Database:
 
                     CREATE UNIQUE INDEX IF NOT EXISTS feedback_from_to_uidx
                         ON feedback (from_user_id, to_user_id);
-
                     CREATE INDEX IF NOT EXISTS likes_to_user_created_idx
                         ON likes (to_user_id, created_at DESC);
-
                     CREATE INDEX IF NOT EXISTS dislikes_from_user_created_idx
                         ON dislikes (from_user_id, created_at DESC);
-
                     CREATE INDEX IF NOT EXISTS blocks_from_user_created_idx
                         ON blocks (from_user_id, created_at DESC);
-
                     CREATE INDEX IF NOT EXISTS events_user_event_created_idx
                         ON events (user_id, event_name, created_at DESC);
-
                     CREATE INDEX IF NOT EXISTS reports_to_user_created_idx
                         ON reports (to_user_id, created_at DESC);
 
                     DO $$
                     BEGIN
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_constraint WHERE conname = 'feedback_liked_check'
-                        ) THEN
-                            ALTER TABLE feedback
-                                ADD CONSTRAINT feedback_liked_check CHECK (liked IN (0, 1));
+                        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'feedback_liked_check') THEN
+                            ALTER TABLE feedback ADD CONSTRAINT feedback_liked_check CHECK (liked IN (0, 1));
                         END IF;
-
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_constraint WHERE conname = 'feedback_meeting_agree_check'
-                        ) THEN
-                            ALTER TABLE feedback
-                                ADD CONSTRAINT feedback_meeting_agree_check CHECK (meeting_agree IN (0, 1));
+                        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'feedback_meeting_agree_check') THEN
+                            ALTER TABLE feedback ADD CONSTRAINT feedback_meeting_agree_check CHECK (meeting_agree IN (0, 1));
                         END IF;
-
-                        IF NOT EXISTS (
-                            SELECT 1 FROM pg_constraint WHERE conname = 'feedback_user_score_check'
-                        ) THEN
-                            ALTER TABLE feedback
-                                ADD CONSTRAINT feedback_user_score_check CHECK (
-                                    user_score IS NULL OR (user_score >= 1 AND user_score <= 5)
-                                );
+                        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'feedback_user_score_check') THEN
+                            ALTER TABLE feedback ADD CONSTRAINT feedback_user_score_check
+                                CHECK (user_score IS NULL OR (user_score >= 1 AND user_score <= 5));
                         END IF;
                     END$$;
                     """
                 )
 
+    @staticmethod
+    def _json(value: Dict[str, Any]) -> str:
+        return json.dumps(value, ensure_ascii=False)
+
+    @staticmethod
+    def _photo_from_row(row: Dict[str, Any]) -> PhotoRecord:
+        return {
+            "photo_id": int(row["photo_id"]),
+            "photo_data": bytes(row["photo_data"]),
+            "mime_type": str(row["mime_type"]),
+            "filename": str(row["filename"]),
+        }
+
     def register_user(self, user_id: int) -> bool:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM users WHERE user_id = %s", (user_id,))
-                existing = cur.fetchone()
-                if existing:
-                    return False
-                cur.execute("INSERT INTO users(user_id) VALUES (%s)", (user_id,))
+                cur.execute(
+                    "INSERT INTO users(user_id) VALUES (%s) ON CONFLICT(user_id) DO NOTHING",
+                    (user_id,),
+                )
                 conn.commit()
-                return True
+                return cur.rowcount > 0
 
     def save_questionnaire(self, user_id: int, answers: Dict[str, str]) -> None:
-        payload = json.dumps(answers, ensure_ascii=False)  # Proper JSON serialization for JSONB.
+        self.register_user(user_id)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -202,11 +200,12 @@ class Database:
                         answers_json = EXCLUDED.answers_json,
                         updated_at = NOW()
                     """,
-                    (user_id, payload),
+                    (user_id, self._json(answers)),
                 )
                 conn.commit()
 
     def save_text_profile(self, user_id: int, about_text: str) -> None:
+        self.register_user(user_id)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -240,19 +239,12 @@ class Database:
                     (user_id,),
                 )
                 photo_rows = cur.fetchall()
-
-        questionnaire = q["answers_json"] if q else {}
-        about_text = t["about_text"] if t else ""
-        photos: List[PhotoRecord] = [
-            {
-                "photo_id": int(row["photo_id"]),
-                "photo_data": bytes(row["photo_data"]),
-                "mime_type": str(row["mime_type"]),
-                "filename": str(row["filename"]),
-            }
-            for row in photo_rows
-        ]
-        return UserProfile(user_id=user_id, questionnaire=questionnaire, about_text=about_text, photos=photos)
+        return UserProfile(
+            user_id=user_id,
+            questionnaire=q["answers_json"] if q else {},
+            about_text=t["about_text"] if t else "",
+            photos=[self._photo_from_row(row) for row in photo_rows],
+        )
 
     def get_all_profiles(self, exclude_user_id: Optional[int] = None) -> List[UserProfile]:
         sql = """
@@ -271,58 +263,41 @@ class Database:
                 cur.execute(sql, params)
                 rows = cur.fetchall()
 
-        profiles: List[UserProfile] = []
-        user_ids = []
-        for row in rows:
-            answers_raw = row["answers_json"] if row["answers_json"] else {}
-            profile = UserProfile(
-                user_id=row["user_id"],
-                questionnaire=answers_raw,
-                about_text=row["about_text"] or "",
-                photos=[],
-            )
-            profiles.append(profile)
-            user_ids.append(row["user_id"])
-        
-        # Load all photos in one query instead of N+1 per profile.
-        if user_ids:
-            with self._connect() as conn:
-                with conn.cursor() as cur:
-                    # Fetch photos for all users in a single batch query.
-                    placeholders = ",".join(["%s"] * len(user_ids))
+                profiles = [
+                    UserProfile(
+                        user_id=int(row["user_id"]),
+                        questionnaire=row["answers_json"] or {},
+                        about_text=row["about_text"] or "",
+                        photos=[],
+                    )
+                    for row in rows
+                ]
+                user_ids = [profile.user_id for profile in profiles]
+                if user_ids:
                     cur.execute(
-                        f"""
+                        """
                         SELECT photo_id, user_id, photo_data, mime_type, filename
                         FROM user_photos
-                        WHERE user_id IN ({placeholders})
+                        WHERE user_id = ANY(%s)
                         ORDER BY user_id, created_at DESC
                         """,
-                        user_ids,
+                        (user_ids,),
                     )
                     photo_rows = cur.fetchall()
-            
-                    # Build user_id to photos mapping.
-            photos_by_user: Dict[int, List[PhotoRecord]] = {}
-            for row in photo_rows:
-                user_id = int(row["user_id"])
-                if user_id not in photos_by_user:
-                    photos_by_user[user_id] = []
-                photos_by_user[user_id].append({
-                    "photo_id": int(row["photo_id"]),
-                    "photo_data": bytes(row["photo_data"]),
-                    "mime_type": str(row["mime_type"]),
-                    "filename": str(row["filename"]),
-                })
-            
-            # Attach photos to corresponding profiles.
-            for profile in profiles:
-                profile.photos = photos_by_user.get(profile.user_id, [])
-        
+                else:
+                    photo_rows = []
+
+        photos_by_user: Dict[int, List[PhotoRecord]] = {}
+        for row in photo_rows:
+            photos_by_user.setdefault(int(row["user_id"]), []).append(self._photo_from_row(row))
+        for profile in profiles:
+            profile.photos = photos_by_user.get(profile.user_id, [])
         return profiles
 
     def add_user_photos(self, user_id: int, photos: List[Dict[str, Any]]) -> int:
         if not photos:
             return 0
+        self.register_user(user_id)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 for photo in photos:
@@ -356,37 +331,22 @@ class Database:
                     (user_id,),
                 )
                 rows = cur.fetchall()
-        return [
-            {
-                "photo_id": int(row["photo_id"]),
-                "photo_data": bytes(row["photo_data"]),
-                "mime_type": str(row["mime_type"]),
-                "filename": str(row["filename"]),
-            }
-            for row in rows
-        ]
+        return [self._photo_from_row(row) for row in rows]
 
     def clear_user_profile(self, user_id: int) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM questionnaire_answers WHERE user_id = %s", (user_id,))
-                cur.execute("DELETE FROM text_profiles WHERE user_id = %s", (user_id,))
-                cur.execute("DELETE FROM user_photos WHERE user_id = %s", (user_id,))
-                cur.execute("DELETE FROM likes WHERE from_user_id = %s OR to_user_id = %s", (user_id, user_id))
-                cur.execute("DELETE FROM dislikes WHERE from_user_id = %s OR to_user_id = %s", (user_id, user_id))
-                cur.execute("DELETE FROM blocks WHERE from_user_id = %s OR to_user_id = %s", (user_id, user_id))
-                cur.execute("DELETE FROM user_drafts WHERE user_id = %s", (user_id,))
+                for table in ("questionnaire_answers", "text_profiles", "user_photos", "user_drafts", "psychology_profile"):
+                    cur.execute(f"DELETE FROM {table} WHERE user_id = %s", (user_id,))
+                for table in ("likes", "dislikes", "blocks"):
+                    cur.execute(f"DELETE FROM {table} WHERE from_user_id = %s OR to_user_id = %s", (user_id, user_id))
                 conn.commit()
 
     def save_like(self, from_user_id: int, to_user_id: int) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO likes(from_user_id, to_user_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT(from_user_id, to_user_id) DO NOTHING
-                    """,
+                    "INSERT INTO likes(from_user_id, to_user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (from_user_id, to_user_id),
                 )
                 conn.commit()
@@ -398,18 +358,13 @@ class Database:
                     "SELECT 1 FROM likes WHERE from_user_id = %s AND to_user_id = %s",
                     (from_user_id, to_user_id),
                 )
-                row = cur.fetchone()
-        return bool(row)
+                return cur.fetchone() is not None
 
     def save_dislike(self, from_user_id: int, to_user_id: int) -> None:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO dislikes(from_user_id, to_user_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT(from_user_id, to_user_id) DO NOTHING
-                    """,
+                    "INSERT INTO dislikes(from_user_id, to_user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (from_user_id, to_user_id),
                 )
                 conn.commit()
@@ -432,11 +387,7 @@ class Database:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO blocks(from_user_id, to_user_id)
-                    VALUES (%s, %s)
-                    ON CONFLICT(from_user_id, to_user_id) DO NOTHING
-                    """,
+                    "INSERT INTO blocks(from_user_id, to_user_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                     (from_user_id, to_user_id),
                 )
                 conn.commit()
@@ -445,10 +396,7 @@ class Database:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    INSERT INTO reports(from_user_id, to_user_id, reason)
-                    VALUES (%s, %s, %s)
-                    """,
+                    "INSERT INTO reports(from_user_id, to_user_id, reason) VALUES (%s, %s, %s)",
                     (from_user_id, to_user_id, reason),
                 )
                 conn.commit()
@@ -461,7 +409,6 @@ class Database:
         return [int(r["to_user_id"]) for r in rows]
 
     def get_blocking_user_ids(self, to_user_id: int) -> List[int]:
-        """Получить пользователей, которые заблокировали этого пользователя"""
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT from_user_id FROM blocks WHERE to_user_id = %s", (to_user_id,))
@@ -469,7 +416,7 @@ class Database:
         return [int(r["from_user_id"]) for r in rows]
 
     def save_draft(self, user_id: int, draft: Dict[str, Any]) -> None:
-        payload = json.dumps(draft, ensure_ascii=False)
+        self.register_user(user_id)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -480,7 +427,7 @@ class Database:
                         draft_json = EXCLUDED.draft_json,
                         updated_at = NOW()
                     """,
-                    (user_id, payload),
+                    (user_id, self._json(draft)),
                 )
                 conn.commit()
 
@@ -498,12 +445,12 @@ class Database:
                 conn.commit()
 
     def log_event(self, user_id: int, event_name: str, meta: Optional[Dict[str, Any]] = None) -> None:
-        payload = json.dumps(meta or {}, ensure_ascii=False)
+        self.register_user(user_id)
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "INSERT INTO events(user_id, event_name, meta_json) VALUES (%s, %s, %s::jsonb)",
-                    (user_id, event_name, payload),
+                    (user_id, event_name, self._json(meta or {})),
                 )
                 conn.commit()
 
@@ -535,14 +482,114 @@ class Database:
         result: Dict[str, int] = {}
         with self._connect() as conn:
             with conn.cursor() as cur:
-                for s in stages:
-                    cur.execute(
-                        "SELECT COUNT(DISTINCT user_id) AS c FROM events WHERE event_name = %s",
-                        (s,),
-                    )
+                for stage in stages:
+                    cur.execute("SELECT COUNT(DISTINCT user_id) AS c FROM events WHERE event_name = %s", (stage,))
                     row = cur.fetchone()
-                    result[s] = int(row["c"]) if row else 0
+                    result[stage] = int(row["c"]) if row else 0
         return result
+
+    def get_monthly_admin_report(self, days: int = 30) -> Dict[str, Any]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM users WHERE registered_at >= NOW() - (%s || ' days')::interval",
+                    (days,),
+                )
+                new_users = int(cur.fetchone()["c"])
+
+                cur.execute(
+                    """
+                    SELECT COUNT(DISTINCT user_id) AS c
+                    FROM events
+                    WHERE created_at >= NOW() - (%s || ' days')::interval
+                    """,
+                    (days,),
+                )
+                active_users = int(cur.fetchone()["c"])
+
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM likes WHERE created_at >= NOW() - (%s || ' days')::interval",
+                    (days,),
+                )
+                likes = int(cur.fetchone()["c"])
+
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS c
+                    FROM likes l1
+                    JOIN likes l2
+                      ON l1.from_user_id = l2.to_user_id
+                     AND l1.to_user_id = l2.from_user_id
+                    WHERE l1.created_at >= NOW() - (%s || ' days')::interval
+                      AND l1.from_user_id < l1.to_user_id
+                    """,
+                    (days,),
+                )
+                matches = int(cur.fetchone()["c"])
+
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS feedback_count,
+                        COALESCE(AVG(user_score), 0) AS avg_score,
+                        COALESCE(SUM(CASE WHEN liked = 1 AND meeting_agree = 1 THEN 1 ELSE 0 END), 0) AS successful
+                    FROM feedback
+                    WHERE created_at >= NOW() - (%s || ' days')::interval
+                    """,
+                    (days,),
+                )
+                feedback = cur.fetchone()
+
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM reports WHERE created_at >= NOW() - (%s || ' days')::interval",
+                    (days,),
+                )
+                reports = int(cur.fetchone()["c"])
+
+                cur.execute(
+                    """
+                    SELECT event_name, COUNT(*) AS c
+                    FROM events
+                    WHERE created_at >= NOW() - (%s || ' days')::interval
+                    GROUP BY event_name
+                    ORDER BY c DESC
+                    LIMIT 10
+                    """,
+                    (days,),
+                )
+                top_events = cur.fetchall()
+
+        return {
+            "days": days,
+            "new_users": new_users,
+            "active_users": active_users,
+            "likes": likes,
+            "matches": matches,
+            "feedback_count": int(feedback["feedback_count"]),
+            "avg_score": round(float(feedback["avg_score"] or 0), 2),
+            "successful_feedback": int(feedback["successful"]),
+            "reports": reports,
+            "top_events": top_events,
+        }
+
+    def get_photo_storage_stats(self) -> Dict[str, int]:
+        with self._connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                        COUNT(*) AS photos_count,
+                        COUNT(DISTINCT user_id) AS users_with_photos,
+                        COALESCE(SUM(octet_length(photo_data)), 0) AS total_bytes
+                    FROM user_photos
+                    """
+                )
+                row = cur.fetchone()
+        return {
+            "photos_count": int(row["photos_count"]),
+            "users_with_photos": int(row["users_with_photos"]),
+            "total_bytes": int(row["total_bytes"]),
+        }
 
     def get_incoming_like_user_ids(self, user_id: int) -> List[int]:
         with self._connect() as conn:
@@ -608,12 +655,7 @@ class Database:
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
-                    SELECT 1
-                    FROM feedback
-                    WHERE from_user_id = %s AND to_user_id = %s
-                    LIMIT 1
-                    """,
+                    "SELECT 1 FROM feedback WHERE from_user_id = %s AND to_user_id = %s LIMIT 1",
                     (from_user_id, to_user_id),
                 )
                 return cur.fetchone() is not None
@@ -628,15 +670,7 @@ class Database:
     def get_feedback_rows_by_author(self, from_user_id: int) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT *
-                    FROM feedback
-                    WHERE from_user_id = %s
-                    ORDER BY id
-                    """,
-                    (from_user_id,),
-                )
+                cur.execute("SELECT * FROM feedback WHERE from_user_id = %s ORDER BY id", (from_user_id,))
                 rows = cur.fetchall()
         return rows
 
@@ -671,10 +705,8 @@ class Database:
     def save_psychology_answers(
         self, user_id: int, answers: Dict[str, int], scores: Optional[Dict[str, float]] = None
     ) -> None:
-        """Сохранить ответы на вопросы анкеты и рассчитанные баллы."""
-        answers_json = json.dumps(answers, ensure_ascii=False)
-        scores_json = json.dumps(scores, ensure_ascii=False) if scores else None
-        
+        self.register_user(user_id)
+        scores_json = self._json(scores) if scores else None
         with self._connect() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -686,51 +718,26 @@ class Database:
                         scores_json = EXCLUDED.scores_json,
                         updated_at = NOW()
                     """,
-                    (user_id, answers_json, scores_json),
+                    (user_id, self._json(answers), scores_json),
                 )
                 conn.commit()
 
     def get_psychology_scores(self, user_id: int) -> Optional[Dict[str, float]]:
-        """Получить рассчитанные баллы психологических торгов пользователя."""
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT scores_json FROM psychology_profile
-                    WHERE user_id = %s
-                    """,
-                    (user_id,),
-                )
+                cur.execute("SELECT scores_json FROM psychology_profile WHERE user_id = %s", (user_id,))
                 row = cur.fetchone()
-                if row and row["scores_json"]:
-                    return row["scores_json"]
-        return None
+        return row["scores_json"] if row and row["scores_json"] else None
 
     def get_psychology_answers(self, user_id: int) -> Optional[Dict[str, int]]:
-        """Получить сырые ответы на оппросы анкеты пользователя."""
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT answers_json FROM psychology_profile
-                    WHERE user_id = %s
-                    """,
-                    (user_id,),
-                )
+                cur.execute("SELECT answers_json FROM psychology_profile WHERE user_id = %s", (user_id,))
                 row = cur.fetchone()
-                if row and row["answers_json"]:
-                    return row["answers_json"]
-        return None
+        return row["answers_json"] if row and row["answers_json"] else None
 
     def has_psychology_profile(self, user_id: int) -> bool:
-        """Проверить, заполнил ли пользователь анкету."""
         with self._connect() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT 1 FROM psychology_profile
-                    WHERE user_id = %s
-                    """,
-                    (user_id,),
-                )
+                cur.execute("SELECT 1 FROM psychology_profile WHERE user_id = %s", (user_id,))
                 return cur.fetchone() is not None
