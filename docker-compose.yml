@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: vk_compatibility_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: compatibility_bot
+      POSTGRES_USER: compatibility_user
+      POSTGRES_PASSWORD: compatibility_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U compatibility_user -d compatibility_bot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
