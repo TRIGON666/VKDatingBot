@@ -4,6 +4,8 @@ import io
 import logging
 import random
 import re
+import os
+import sys
 from collections.abc import Mapping
 from difflib import SequenceMatcher
 from html import unescape
@@ -1621,7 +1623,6 @@ class VKCompatibilityBot:
             "candidate_metrics": candidate_metrics,
             "candidate_idx": 0,
         }
-        self.send_message(user_id, "Новые симпатии. Можно сразу ответить взаимностью кнопкой ❤.", keyboard=self._browse_keyboard())
         self._show_next_candidate(user_id)
 
     # Работает с подбором и совместимостью анкет.
@@ -1715,7 +1716,7 @@ class VKCompatibilityBot:
         self.user_states[user_id] = state
         self.send_message(
             user_id,
-            f"Выберите матч для отзыва (страница {page + 1}/{max_page + 1}):",
+            f"Выберите мэтч для отзыва (страница {page + 1}/{max_page + 1}):",
             keyboard=kb,
         )
 
@@ -2055,3 +2056,4 @@ class VKCompatibilityBot:
                     self.handle_message(event)
                 except Exception as e:
                     self._log(f"ОШИБКА обработки сообщения: {str(e)}")
+                    

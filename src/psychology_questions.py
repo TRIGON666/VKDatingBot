@@ -355,15 +355,6 @@ def get_question_by_id(question_id: str) -> Dict:
 
 # Считает психологические шкалы по ответам пользователя.
 def calculate_scores(answers: Dict[str, int]) -> Dict[str, float]:
-    """
-    Calculate trait scores from raw answers (1-5 scale).
-    
-    Args:
-        answers: Dict mapping question_id to answer (1-5)
-    
-    Returns:
-        Dict with trait names and scores (0-100)
-    """
     trait_scores = {}
     trait_counts = {}
     
