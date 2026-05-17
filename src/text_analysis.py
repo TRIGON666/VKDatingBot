@@ -237,7 +237,7 @@ def tfidf_compatibility(first_text: str, second_text: str) -> float:
     if not prepared[0] or not prepared[1]:
         return 0.0
 
-    word_vectorizer = TfidfVectorizer(ngram_range=(1, 3), sublinear_tf=True, max_df=0.95)
+    word_vectorizer = TfidfVectorizer(ngram_range=(1, 3), sublinear_tf=True, max_df=1.0)
     word_matrix = word_vectorizer.fit_transform(prepared)
     word_similarity = _safe_similarity(word_matrix[0:1], word_matrix[1:2])
 

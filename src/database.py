@@ -488,18 +488,6 @@ class Database:
         return self._fetch_all("SELECT * FROM reports ORDER BY created_at DESC LIMIT %s", (limit,))
 
     # Возвращает данные из хранилища или справочника.
-    def get_funnel_counts(self) -> Dict[str, int]:
-        stages = ["start", "profile_complete", "browse_started", "like_sent", "match"]
-        result: Dict[str, int] = {}
-        with self._connect() as conn:
-            with conn.cursor() as cur:
-                for stage in stages:
-                    cur.execute("SELECT COUNT(DISTINCT user_id) AS c FROM events WHERE event_name = %s", (stage,))
-                    row = cur.fetchone()
-                    result[stage] = int(row["c"]) if row else 0
-        return result
-
-    # Возвращает данные из хранилища или справочника.
     def get_monthly_admin_report(self, days: int = 30) -> Dict[str, Any]:
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -723,6 +711,65 @@ class Database:
             "values_family": 62,
             "values_independence": 58,
         }
+        questionnaire_variants = [
+            {"activity": "активный", "communication": "эмоциональный", "values": "баланс", "tempo": "быстрый"},
+            {"activity": "активный", "communication": "нейтральный", "values": "карьера", "tempo": "быстрый"},
+            {"activity": "смешанный", "communication": "эмоциональный", "values": "баланс", "tempo": "средний"},
+            {"activity": "смешанный", "communication": "спокойный", "values": "семья", "tempo": "средний"},
+            {"activity": "домашний", "communication": "спокойный", "values": "семья", "tempo": "медленный"},
+            {"activity": "домашний", "communication": "нейтральный", "values": "баланс", "tempo": "медленный"},
+            {"activity": "смешанный", "communication": "нейтральный", "values": "карьера", "tempo": "средний"},
+            {"activity": "активный", "communication": "спокойный", "values": "семья", "tempo": "средний"},
+            {"activity": "домашний", "communication": "эмоциональный", "values": "баланс", "tempo": "средний"},
+            {"activity": "смешанный", "communication": "эмоциональный", "values": "карьера", "tempo": "быстрый"},
+        ]
+        psych_templates = [
+            {"openness": 82, "conscientiousness": 56, "extraversion": 84, "agreeableness": 62, "neuroticism": 26,
+             "attachment_secure": 72, "attachment_anxious": 24, "attachment_avoidant": 28, "conflict_collaborative": 68,
+             "conflict_avoiding": 26, "conflict_competitive": 34, "love_physical_touch": 72, "love_words": 54,
+             "love_quality_time": 66, "love_acts_service": 42, "values_family": 50, "values_independence": 74},
+            {"openness": 48, "conscientiousness": 78, "extraversion": 34, "agreeableness": 82, "neuroticism": 32,
+             "attachment_secure": 78, "attachment_anxious": 24, "attachment_avoidant": 18, "conflict_collaborative": 82,
+             "conflict_avoiding": 42, "conflict_competitive": 16, "love_physical_touch": 46, "love_words": 68,
+             "love_quality_time": 80, "love_acts_service": 70, "values_family": 86, "values_independence": 36},
+            {"openness": 66, "conscientiousness": 88, "extraversion": 54, "agreeableness": 52, "neuroticism": 24,
+             "attachment_secure": 56, "attachment_anxious": 22, "attachment_avoidant": 58, "conflict_collaborative": 54,
+             "conflict_avoiding": 22, "conflict_competitive": 56, "love_physical_touch": 36, "love_words": 46,
+             "love_quality_time": 44, "love_acts_service": 82, "values_family": 34, "values_independence": 88},
+            {"openness": 58, "conscientiousness": 52, "extraversion": 46, "agreeableness": 70, "neuroticism": 68,
+             "attachment_secure": 42, "attachment_anxious": 72, "attachment_avoidant": 24, "conflict_collaborative": 62,
+             "conflict_avoiding": 66, "conflict_competitive": 22, "love_physical_touch": 58, "love_words": 82,
+             "love_quality_time": 76, "love_acts_service": 48, "values_family": 68, "values_independence": 46},
+            {"openness": 88, "conscientiousness": 46, "extraversion": 64, "agreeableness": 58, "neuroticism": 42,
+             "attachment_secure": 62, "attachment_anxious": 38, "attachment_avoidant": 40, "conflict_collaborative": 56,
+             "conflict_avoiding": 34, "conflict_competitive": 38, "love_physical_touch": 52, "love_words": 72,
+             "love_quality_time": 64, "love_acts_service": 38, "values_family": 46, "values_independence": 70},
+            {"openness": 36, "conscientiousness": 74, "extraversion": 48, "agreeableness": 58, "neuroticism": 54,
+             "attachment_secure": 54, "attachment_anxious": 46, "attachment_avoidant": 42, "conflict_collaborative": 48,
+             "conflict_avoiding": 52, "conflict_competitive": 42, "love_physical_touch": 62, "love_words": 42,
+             "love_quality_time": 52, "love_acts_service": 74, "values_family": 62, "values_independence": 56},
+        ]
+        activity_topics = {
+            "активный": ["спорт", "поездки", "концерты", "велосипед"],
+            "смешанный": ["кино", "друзья", "прогулки", "новые места"],
+            "домашний": ["книги", "готовка", "сериалы", "настолки"],
+        }
+        value_topics = {
+            "баланс": ["баланс", "юмор", "теплое общение"],
+            "семья": ["семья", "уют", "забота"],
+            "карьера": ["развитие", "проекты", "цели"],
+        }
+        common_topics = ["кофе", "прогулки", "кино", "разговоры", "совместные планы"]
+        report_reasons = [
+            "оскорбления в переписке",
+            "спам или навязчивая реклама",
+            "неуместные сообщения",
+            "подозрение на фейковую анкету",
+            "агрессивное поведение",
+            "нежелательные личные вопросы",
+            "жалоба на фото профиля",
+            "нарушение границ общения",
+        ]
 
         created = {
             "batch_id": batch_id,
@@ -738,15 +785,64 @@ class Database:
         def _days_ago() -> int:
             return rng.randint(0, max(0, days - 1))
 
-        def _score(value: int) -> int:
-            return max(5, min(95, value + rng.randint(-7, 7)))
+        def _score(value: int, spread: int = 12) -> int:
+            return max(5, min(95, value + rng.randint(-spread, spread)))
 
-        def _pair_affinity(left: Dict[str, Any], right: Dict[str, Any]) -> float:
-            age_bonus = max(0, 5 - abs(int(left["age"]) - int(right["age"]))) * 0.04
-            persona_bonus = 0.30 if left["persona"] == right["persona"] else 0.10
-            city_bonus = 0.12 if left["city"] == right["city"] else 0.0
-            tempo_bonus = 0.08 if left["answers"]["tempo"] == right["answers"]["tempo"] else 0.0
-            return min(0.88, 0.30 + age_bonus + persona_bonus + city_bonus + tempo_bonus)
+        def _questionnaire_score(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+            weights = {"activity": 1.2, "communication": 1.0, "values": 1.4, "tempo": 0.8}
+            total = sum(weights.values())
+            matched = sum(weight for key, weight in weights.items() if left["answers"].get(key) == right["answers"].get(key))
+            return (matched / total) * 100.0 if total else 0.0
+
+        def _psych_score(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+            left_scores = left.get("psych_scores") or {}
+            right_scores = right.get("psych_scores") or {}
+            common = [key for key in left_scores if key in right_scores]
+            if not common:
+                return 50.0
+            avg_diff = sum(abs(float(left_scores[key]) - float(right_scores[key])) for key in common) / len(common)
+            return max(0.0, min(100.0, 100.0 - avg_diff))
+
+        def _pair_preview_score(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+            questionnaire_score = _questionnaire_score(left, right)
+            psychology_score = _psych_score(left, right)
+            if questionnaire_score < 50:
+                tfidf_score = 20.0
+                nlp_score = 30.0
+            elif questionnaire_score < 75:
+                tfidf_score = 28.0
+                nlp_score = 52.0
+            else:
+                tfidf_score = 42.0
+                nlp_score = 72.0
+            return (
+                questionnaire_score * 0.35
+                + tfidf_score * 0.15
+                + nlp_score * 0.30
+                + psychology_score * 0.20
+            )
+
+        def _pair_group(left: Dict[str, Any], right: Dict[str, Any]) -> str:
+            score = _pair_preview_score(left, right)
+            if score < 50:
+                return "weak"
+            if score < 75:
+                return "medium"
+            return "strong"
+
+        def _make_about_text(answers: Dict[str, str], idx: int) -> str:
+            activity_words = activity_topics[answers["activity"]]
+            value_words = value_topics[answers["values"]]
+            shared = [common_topics[(idx + offset) % len(common_topics)] for offset in range(3)]
+            topic = activity_words[idx % len(activity_words)]
+            value = value_words[(idx // 2) % len(value_words)]
+            templates = [
+                "Люблю {a}, {b}, {topic} и живые разговоры после работы. В отношениях ценю {value}, честность и чувство юмора.",
+                "В свободное время выбираю {topic}, {a} и {c}. Ищу человека для теплого общения, кофе и совместных планов.",
+                "Мне близки {value}, {b}, хорошие прогулки и кино. Нравится, когда можно обсуждать планы спокойно и прямо.",
+                "Обычно за {a}, новые впечатления и {topic}, но также люблю домашний вечер, кофе и разговоры без спешки.",
+            ]
+            return templates[idx % len(templates)].format(a=shared[0], b=shared[1], c=shared[2], topic=topic, value=value)
 
         with self._connect() as conn:
             with conn.cursor() as cur:
@@ -767,6 +863,8 @@ class Database:
                     gender = genders[idx % 2]
                     search_gender = "Женский" if gender == "Мужской" else "Мужской"
                     persona = personas[(idx // 2) % len(personas)]
+                    variant = questionnaire_variants[(idx * 3 + idx // 2) % len(questionnaire_variants)]
+                    psych_template = psych_templates[(idx * 2 + idx // 3) % len(psych_templates)]
                     name_pool = male_names if gender == "Мужской" else female_names
                     age = 23 + ((idx * 2 + rng.randint(0, 2)) % 9)
                     city = cities[(idx // 4) % len(cities)] if rng.random() < 0.85 else rng.choice(cities)
@@ -776,25 +874,27 @@ class Database:
                         "search_gender": search_gender,
                         "age": str(age),
                         "city": city,
-                        "activity": persona["activity"],
-                        "communication": persona["communication"],
-                        "values": persona["values"],
-                        "tempo": persona["tempo"],
+                        "activity": variant["activity"],
+                        "communication": variant["communication"],
+                        "values": variant["values"],
+                        "tempo": variant["tempo"],
                     }
-                    about_text = rng.choice(persona["texts"])
-                    psych_scores = {key: _score(int(value)) for key, value in {**extra_psych_keys, **persona["psych"]}.items()}
+                    about_text = _make_about_text(answers, idx)
+                    psych_scores = {key: _score(int(value), 10) for key, value in {**extra_psych_keys, **psych_template}.items()}
                     profiles[user_id] = {
                         "gender": gender,
                         "age": age,
                         "city": city,
                         "persona": persona["key"],
                         "answers": answers,
+                        "about_text": about_text,
+                        "psych_scores": psych_scores,
                     }
 
                     cur.execute(
                         """
                         INSERT INTO users(user_id, registered_at)
-                        VALUES (%s, NOW() - (%s || ' days')::interval)
+                        VALUES (%s, CURRENT_DATE - (%s || ' days')::interval)
                         ON CONFLICT(user_id) DO NOTHING
                         """,
                         (user_id, _days_ago()),
@@ -832,7 +932,7 @@ class Database:
                         cur.execute(
                             """
                             INSERT INTO events(user_id, event_name, meta_json, created_at)
-                            VALUES (%s, %s, %s::jsonb, NOW() - (%s || ' days')::interval)
+                            VALUES (%s, %s, %s::jsonb, CURRENT_DATE - (%s || ' days')::interval)
                             """,
                             (user_id, event_name, self._json({"synthetic": True, "batch": batch_id}), _days_ago()),
                         )
@@ -849,15 +949,24 @@ class Database:
                     ]
                     if not candidates:
                         return None
-                    same_persona = [uid for uid in candidates if profiles[uid]["persona"] == left["persona"]]
-                    if same_persona and rng.random() < 0.78:
-                        candidates = same_persona
+                    target_group = rng.choices(
+                        ["weak", "medium", "strong"],
+                        weights=[3, 4, 3],
+                        k=1,
+                    )[0]
+
+                    preferred = [
+                        uid
+                        for uid in candidates
+                        if _pair_group(left, profiles[uid]) == target_group
+                    ]
+                    if preferred and rng.random() < 0.82:
+                        candidates = preferred
                     weighted: List[int] = []
                     for uid in candidates:
                         right = profiles[uid]
-                        weight = 2
-                        if right["persona"] == left["persona"]:
-                            weight += 10
+                        preview_score = _pair_preview_score(left, right)
+                        weight = 2 + int(preview_score // 20)
                         if right["city"] == left["city"]:
                             weight += 3
                         weight += max(0, 4 - abs(int(right["age"]) - int(left["age"])))
@@ -875,11 +984,11 @@ class Database:
                     used_pairs.add((from_user_id, to_user_id))
                     left = profiles[from_user_id]
                     right = profiles[to_user_id]
-                    affinity = _pair_affinity(left, right)
+                    pair_group = _pair_group(left, right)
                     cur.execute(
                         """
                         INSERT INTO likes(from_user_id, to_user_id, created_at)
-                        VALUES (%s, %s, NOW() - (%s || ' days')::interval)
+                        VALUES (%s, %s, CURRENT_DATE - (%s || ' days')::interval)
                         ON CONFLICT DO NOTHING
                         """,
                         (from_user_id, to_user_id, _days_ago()),
@@ -888,19 +997,20 @@ class Database:
                     cur.execute(
                         """
                         INSERT INTO events(user_id, event_name, meta_json, created_at)
-                        VALUES (%s, 'like_sent', %s::jsonb, NOW() - (%s || ' days')::interval)
+                        VALUES (%s, 'like_sent', %s::jsonb, CURRENT_DATE - (%s || ' days')::interval)
                         """,
                         (from_user_id, self._json({"synthetic": True, "batch": batch_id, "to": to_user_id}), _days_ago()),
                     )
                     created["events"] += 1
 
-                    is_mutual = rng.random() < (0.20 + affinity * 0.55) and (to_user_id, from_user_id) not in used_pairs
+                    mutual_chance = {"weak": 0.36, "medium": 0.62, "strong": 0.82}[pair_group]
+                    is_mutual = rng.random() < mutual_chance and (to_user_id, from_user_id) not in used_pairs
                     if is_mutual:
                         used_pairs.add((to_user_id, from_user_id))
                         cur.execute(
                             """
                             INSERT INTO likes(from_user_id, to_user_id, created_at)
-                            VALUES (%s, %s, NOW() - (%s || ' days')::interval)
+                            VALUES (%s, %s, CURRENT_DATE - (%s || ' days')::interval)
                             ON CONFLICT DO NOTHING
                             """,
                             (to_user_id, from_user_id, _days_ago()),
@@ -910,24 +1020,28 @@ class Database:
                             cur.execute(
                                 """
                                 INSERT INTO events(user_id, event_name, meta_json, created_at)
-                                VALUES (%s, 'match', %s::jsonb, NOW() - (%s || ' days')::interval)
+                                VALUES (%s, 'match', %s::jsonb, CURRENT_DATE - (%s || ' days')::interval)
                                 """,
                                 (event_user, self._json({"synthetic": True, "batch": batch_id, "with": other_user}), _days_ago()),
                             )
                             created["events"] += 1
 
-                    can_leave_feedback = left["persona"] == right["persona"] or affinity >= 0.68 or rng.random() < 0.12
-                    if is_mutual and can_leave_feedback and rng.random() < 0.82:
-                        liked = 1 if rng.random() < affinity else 0
-                        meeting_agree = 1 if liked and rng.random() < min(0.82, affinity + 0.08) else 0
-                        if liked:
-                            user_score = 5 if rng.random() < max(0.25, affinity - 0.25) else 4
+                    feedback_chance = {"weak": 0.62, "medium": 0.82, "strong": 0.92}[pair_group]
+                    if is_mutual and rng.random() < feedback_chance:
+                        liked_probability = {"weak": 0.24, "medium": 0.58, "strong": 0.88}[pair_group]
+                        liked = 1 if rng.random() < liked_probability else 0
+                        meeting_chance = {"weak": 0.18, "medium": 0.50, "strong": 0.80}[pair_group]
+                        meeting_agree = 1 if liked and rng.random() < meeting_chance else 0
+                        if pair_group == "strong":
+                            user_score = rng.choices([4, 5], weights=[4, 6], k=1)[0]
+                        elif pair_group == "medium":
+                            user_score = rng.choices([2, 3, 4, 5], weights=[1, 4, 4, 1], k=1)[0]
                         else:
-                            user_score = rng.choice([2, 3])
+                            user_score = rng.choices([1, 2, 3], weights=[2, 5, 3], k=1)[0]
                         cur.execute(
                             """
                             INSERT INTO feedback(from_user_id, to_user_id, liked, meeting_agree, user_score, created_at)
-                            VALUES (%s, %s, %s, %s, %s, NOW() - (%s || ' days')::interval)
+                            VALUES (%s, %s, %s, %s, %s, CURRENT_DATE - (%s || ' days')::interval)
                             ON CONFLICT (from_user_id, to_user_id) DO NOTHING
                             """,
                             (from_user_id, to_user_id, liked, meeting_agree, user_score, _days_ago()),
@@ -938,15 +1052,15 @@ class Database:
                         cur.execute(
                             """
                             INSERT INTO reports(from_user_id, to_user_id, reason, created_at)
-                            VALUES (%s, %s, %s, NOW() - (%s || ' days')::interval)
+                            VALUES (%s, %s, %s, CURRENT_DATE - (%s || ' days')::interval)
                             """,
-                            (from_user_id, to_user_id, f"synthetic_demo:{batch_id}", _days_ago()),
+                            (from_user_id, to_user_id, rng.choice(report_reasons), _days_ago()),
                         )
                         created["reports"] += 1
                         cur.execute(
                             """
                             INSERT INTO events(user_id, event_name, meta_json, created_at)
-                            VALUES (%s, 'report_sent', %s::jsonb, NOW() - (%s || ' days')::interval)
+                            VALUES (%s, 'report_sent', %s::jsonb, CURRENT_DATE - (%s || ' days')::interval)
                             """,
                             (from_user_id, self._json({"synthetic": True, "batch": batch_id, "to": to_user_id}), _days_ago()),
                         )
